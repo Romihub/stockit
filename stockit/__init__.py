@@ -1,0 +1,1 @@
+# Make the stockit directory a Python package

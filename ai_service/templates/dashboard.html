@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StockIt AI - Model Monitoring Dashboard</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .metric-card {
+            transition: transform 0.2s;
+        }
+        .metric-card:hover {
+            transform: translateY(-2px);
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <nav class="bg-white shadow-lg">
+        <div class="max-w-7xl mx-auto px-4">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <span class="text-xl font-bold text-gray-800">StockIt AI Dashboard</span>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <select id="symbolSelect" class="rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        <option value="">Select Symbol</option>
+                    </select>
+                    <select id="timeframeSelect" class="rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        <option value="1h">1 Hour</option>
+                        <option value="1d" selected>1 Day</option>
+                        <option value="7d">7 Days</option>
+                        <option value="30d">30 Days</option>
+                    </select>
+                    <button id="refreshBtn" class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700">
+                        Refresh
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto py-6 px-4">
+        <!-- Key Metrics -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div class="bg-white rounded-lg shadow p-6 metric-card">
+                <h3 class="text-sm font-medium text-gray-500">Prediction Accuracy</h3>
+                <p id="accuracyMetric" class="mt-2 text-3xl font-semibold text-gray-900">--%</p>
+                <div class="mt-2">
+                    <div class="text-sm text-gray-600">
+                        <span id="accuracyTrend" class="font-medium"></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow p-6 metric-card">
+                <h3 class="text-sm font-medium text-gray-500">Average Latency</h3>
+                <p id="latencyMetric" class="mt-2 text-3xl font-semibold text-gray-900">--ms</p>
+                <div class="mt-2">
+                    <div class="text-sm text-gray-600">
+                        <span id="latencyTrend" class="font-medium"></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow p-6 metric-card">
+                <h3 class="text-sm font-medium text-gray-500">Error Rate</h3>
+                <p id="errorRateMetric" class="mt-2 text-3xl font-semibold text-gray-900">--%</p>
+                <div class="mt-2">
+                    <div class="text-sm text-gray-600">
+                        <span id="errorTrend" class="font-medium"></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow p-6 metric-card">
+                <h3 class="text-sm font-medium text-gray-500">Cache Hit Rate</h3>
+                <p id="cacheHitMetric" class="mt-2 text-3xl font-semibold text-gray-900">--%</p>
+                <div class="mt-2">
+                    <div class="text-sm text-gray-600">
+                        <span id="cacheTrend" class="font-medium"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-medium text-gray-900 mb-4">Prediction Accuracy Over Time</h3>
+                <div id="accuracyChart" class="h-80"></div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-medium text-gray-900 mb-4">Model Loss</h3>
+                <div id="lossChart" class="h-80"></div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-medium text-gray-900 mb-4">Resource Usage</h3>
+                <div id="resourceChart" class="h-80"></div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-medium text-gray-900 mb-4">Prediction Distribution</h3>
+                <div id="distributionChart" class="h-80"></div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        let currentSymbol = '';
+        let currentTimeframe = '1d';
+        let charts = {};
+
+        async function fetchMetrics() {
+            if (!currentSymbol) return;
+            
+            try {
+                const response = await fetch(`/api/metrics/${currentSymbol}?timeframe=${currentTimeframe}`);
+                const data = await response.json();
+                updateDashboard(data);
+            } catch (error) {
+                console.error('Failed to fetch metrics:', error);
+            }
+        }
+
+        function updateDashboard(data) {
+            // Update metrics
+            document.getElementById('accuracyMetric').textContent = `${(data.accuracy * 100).toFixed(1)}%`;
+            document.getElementById('latencyMetric').textContent = `${(data.avg_latency * 1000).toFixed(0)}ms`;
+            document.getElementById('errorRateMetric').textContent = `${(data.error_rate * 100).toFixed(1)}%`;
+            document.getElementById('cacheHitMetric').textContent = `${(data.cache_hit_rate * 100).toFixed(1)}%`;
+
+            // Update charts
+            updateAccuracyChart(data.accuracy_history);
+            updateLossChart(data.loss_history);
+            updateResourceChart(data.resource_usage);
+            updateDistributionChart(data.prediction_distribution);
+        }
+
+        function createCharts() {
+            charts.accuracy = Plotly.newPlot('accuracyChart', [{
+                y: [],
+                type: 'scatter',
+                name: 'Accuracy'
+            }], {
+                margin: { t: 0, r: 0, l: 40, b: 40 },
+                yaxis: { range: [0, 100] }
+            });
+
+            charts.loss = Plotly.newPlot('lossChart', [{
+                y: [],
+                type: 'scatter',
+                name: 'Training Loss'
+            }, {
+                y: [],
+                type: 'scatter',
+                name: 'Validation Loss'
+            }], {
+                margin: { t: 0, r: 0, l: 40, b: 40 }
+            });
+
+            charts.resources = Plotly.newPlot('resourceChart', [{
+                y: [],
+                type: 'scatter',
+                name: 'Memory Usage'
+            }, {
+                y: [],
+                type: 'scatter',
+                name: 'GPU Memory'
+            }], {
+                margin: { t: 0, r: 0, l: 40, b: 40 }
+            });
+
+            charts.distribution = Plotly.newPlot('distributionChart', [{
+                type: 'box',
+                y: []
+            }], {
+                margin: { t: 0, r: 0, l: 40, b: 40 }
+            });
+        }
+
+        async function loadSymbols() {
+            try {
+                const response = await fetch('/api/symbols');
+                const symbols = await response.json();
+                const select = document.getElementById('symbolSelect');
+                
+                symbols.forEach(symbol => {
+                    const option = document.createElement('option');
+                    option.value = symbol;
+                    option.textContent = symbol;
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Failed to load symbols:', error);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            createCharts();
+            loadSymbols();
+
+            document.getElementById('symbolSelect').addEventListener('change', (e) => {
+                currentSymbol = e.target.value;
+                fetchMetrics();
+            });
+
+            document.getElementById('timeframeSelect').addEventListener('change', (e) => {
+                currentTimeframe = e.target.value;
+                fetchMetrics();
+            });
+
+            document.getElementById('refreshBtn').addEventListener('click', fetchMetrics);
+
+            // Auto-refresh every minute
+            setInterval(fetchMetrics, 60000);
+        });
+    </script>
+</body>
+</html>
