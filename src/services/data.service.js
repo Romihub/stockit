@@ -9,6 +9,40 @@ class DataService {
       global.stockCache = new NodeCache();
     }
 
+    // EODHD API configuration with rate limiting
+    this.eodhd = axios.create({
+      baseURL: 'https://eodhistoricaldata.com/api',
+      params: {
+        api_token: process.env.EODHD_API_KEY,
+        fmt: 'json'
+      }
+    });
+
+    // Add rate limiting interceptor for EODHD
+    let eodhdCallCount = 0;
+    let lastEodhdCall = Date.now();
+    this.eodhd.interceptors.request.use(config => {
+      const now = Date.now();
+      if (now - lastEodhdCall > 20 * 60 * 1000) { // Reset if 20 minutes passed
+        eodhdCallCount = 0;
+        lastEodhdCall = now;
+      }
+      
+      if (eodhdCallCount >= 20) {
+        const waitTime = (20 * 60 * 1000) - (now - lastEodhdCall);
+        return new Promise(resolve => {
+          setTimeout(() => {
+            eodhdCallCount = 0;
+            lastEodhdCall = Date.now();
+            resolve(config);
+          }, waitTime);
+        });
+      }
+      
+      eodhdCallCount++;
+      return config;
+    });
+
     // Alpha Vantage API for stock data
     this.alphaVantage = axios.create({
       baseURL: 'https://www.alphavantage.co/query',
@@ -194,6 +228,41 @@ class DataService {
         default: start.setMonth(start.getMonth() - 1);
       }
 
+      // First try EODHD
+      try {
+        const eodResponse = await this.eodhd.get('/eod', {
+          params: {
+            symbol: `${symbol}.US`,
+            from: start.toISOString().split('T')[0],
+            to: end.toISOString().split('T')[0],
+            period: interval === '1day' ? 'd' : interval[0],
+            order: 'a'
+          }
+        });
+
+        if (eodResponse.data && Array.isArray(eodResponse.data)) {
+          const historicalData = eodResponse.data.map(item => ({
+            timestamp: new Date(item.date).getTime(),
+            open: item.open,
+            high: item.high,
+            low: item.low,
+            close: item.close,
+            volume: item.volume
+          }));
+
+          if (historicalData.length > 0) {
+            // Cache the results
+            if (global.stockCache) {
+              global.stockCache.set(cacheKey, JSON.stringify(historicalData), cacheDuration);
+            }
+            return historicalData;
+          }
+        }
+      } catch (eodError) {
+        console.warn('EODHD historical data fetch failed, falling back to Polygon:', eodError.message);
+      }
+
+      // If EODHD fails or returns no data, fallback to Polygon
       // Convert interval to Polygon.io format
       const intervalMap = {
         '1min': { multiplier: 1, timespan: 'minute' },
@@ -309,14 +378,13 @@ class DataService {
 
       try {
         // Get initial list of tickers
+        // Get additional stocks without sorting by market_cap
         const response = await this.polygon.get('/v3/reference/tickers', {
           params: {
             market: 'stocks',
             active: true,
             type: 'CS', // Common Stock
             limit: 20, // Reduced limit to avoid rate limits
-            sort: 'market_cap',
-            order: 'desc',
             market_cap_min: 100000000000 // $100B minimum
           }
         });
@@ -351,9 +419,14 @@ class DataService {
                   blueChipStocks.push(newStock);
                   console.log(`Added ${newStock.symbol} to blue-chip stocks`);
 
-                  // Sort by market cap and update cache
-                  blueChipStocks.sort((a, b) => b.market_cap - a.market_cap);
-                  global.stockCache?.set(cacheKey, JSON.stringify(blueChipStocks), cacheDuration);
+              // Sort locally by market cap and update cache
+              const sortedStocks = blueChipStocks.sort((a, b) => {
+                // Handle undefined market_cap values
+                const aCap = a.market_cap || 0;
+                const bCap = b.market_cap || 0;
+                return bCap - aCap;
+              });
+              global.stockCache?.set(cacheKey, JSON.stringify(sortedStocks), cacheDuration);
                 }
               }
             } catch (error) {

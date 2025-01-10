@@ -68,3 +68,9 @@ export interface TimeRange {
   value: '1D' | '1W' | '1M' | '3M' | '6M' | '1Y' | '5Y';
   interval: string;
 }
+
+export interface BlueChipStock {
+  symbol: string;
+  name: string;
+  market_cap: number;
+}
